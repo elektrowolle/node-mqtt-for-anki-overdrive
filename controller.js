@@ -19,14 +19,98 @@ var async = require('async');
 var noble = require('noble');
 var mqtt = require('mqtt');
 var readline = require('readline');
+var bodyParser = require('body-parser');
 
 var receivedMessages = require('./receivedMessages.js')();
 var prepareMessages = require('./prepareMessages.js')();
 
+
+
 var readCharacteristic;
 var writeCharacteristic;
-var car;
+var cars = [];
 var lane;
+
+const express = require('express')
+const app = express()
+
+app.use(bodyParser.json()); // for parsing application/json
+app.use(bodyParser.urlencoded({ extended: true })); // for parsing 
+
+function carInfo(peripheral){
+  return function (req, res, next) {
+    console.log('LOGGED')
+    let carData = {
+      address: peripheral.id,
+      battery: 1,
+      version: 2,
+    };
+    res.send(carData);
+    next()
+  }
+}
+
+function carControl(peripheral, writeCharacteristic){
+  function invokeCommand(cmd) {
+    var message = prepareMessages.format(cmd);
+    if (message) {                     
+      console.log("Command: " + cmd, message);
+              
+      if (writeCharacteristic) { 
+        writeCharacteristic.write(message, false, function(err) {
+          if (!err) {
+            //console.log('Command sent');
+          }
+          else {
+            console.log('Error sending command');
+          }
+        });
+      } else {
+        console.log('Error sending command');
+      }
+    }
+  }
+
+  function invokeCommand(cmd) {
+    var message = prepareMessages.format(cmd);
+    if (message) {                     
+      console.log("Command: " + cmd, message);
+              
+      if (writeCharacteristic) { 
+        writeCharacteristic.write(message, false, function(err) {
+          if (!err) {
+            //console.log('Command sent');
+          }
+          else {
+            console.log('Error sending command');
+          }
+        });
+      } else {
+        console.log('Error sending command');
+      }
+    }
+  }
+
+  return function (req, res, next) {
+    console.log('Got your data' )
+    res.send(JSON.stringify(req.body));
+    if(req.body.command){
+      invokeCommand(req.body.command);
+    }
+    next()
+  }
+}
+
+
+
+app.listen(3000, function () {
+  console.log('Example app listening on port 3000!')
+})
+
+var carIds = [
+  "1dccd1656f9f4751807331d3f261c17a",
+  "cf825d8fe855403fa8d17005ce3efc5a"
+]
 
 config.read(process.argv[2], function(carId, startlane, mqttClient) {
 
@@ -42,20 +126,23 @@ config.read(process.argv[2], function(carId, startlane, mqttClient) {
   }, 2000);
 
   noble.on('discover', function(peripheral) {
-    if (peripheral.id === carId) {
-      noble.stopScanning();
+    let carId = carIds.indexOf(peripheral.id);
+    console.log(carId)
+    if (carId >= 0)  {
+      // noble.stopScanning();
 
       var advertisement = peripheral.advertisement;
       var serviceUuids = JSON.stringify(peripheral.advertisement.serviceUuids);
       if(serviceUuids.indexOf("be15beef6186407e83810bd89c4d8df4") > -1) {
         console.log('Car discovered. ID: ' + peripheral.id); 
-        car = peripheral;
-        setUp(car);
+        let car = cars[carId] = peripheral;
+        // console.log(cars);
+        setUp(car, carId);
       }
     }
   });
 
-  function setUp(peripheral) {
+  function setUp(peripheral, id) {
     peripheral.on('disconnect', function() {
       console.log('Car has been disconnected');
       process.exit(0);
@@ -89,7 +176,9 @@ config.read(process.argv[2], function(carId, startlane, mqttClient) {
 
                   if (characteristic.uuid == 'be15bee16186407e83810bd89c4d8df4') {                        
                     writeCharacteristic = characteristic;
-
+                    app.get('/' + id, carInfo(peripheral));
+                    app.post('/' + id, carControl(peripheral, writeCharacteristic));
+                    console.log("route opened for", '/' + id);
                     init(startlane); 
 
                     // this characterstic doesn't seem to be used for receiving data
@@ -245,7 +334,7 @@ cli.on('line', function (cmd) {
 process.stdin.resume();
 
 function exitHandler(options, err) {
-  if (car) car.disconnect();
+  cars.map( car => car.disconnect());
 }
 
 process.on('exit', exitHandler.bind(null,{cleanup:true}));
